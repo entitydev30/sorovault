@@ -116,6 +116,36 @@
         }
       }
     },
+    "/api/decode": {
+      "post": {
+        "summary": "Decode an uploaded WASM without storing it",
+        "description": "Decodes the interface embedded in an uploaded module and returns it. Nothing is stored, and neither the network nor the database is touched. The body is the raw module (any content type) or a multipart/form-data upload whose first file part carries it, limited to 524288 bytes (512 KiB); the decoder's own limits apply to whatever arrives within that budget.",
+        "operationId": "decodeWasm",
+        "parameters": [
+          { "name": "format", "in": "query", "description": "ts answers with the generated TypeScript client for the interface instead of the ABI JSON.", "schema": { "type": "string", "enum": ["json", "ts"], "default": "json" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/wasm": { "schema": { "type": "string", "format": "binary" } },
+            "multipart/form-data": { "schema": {
+              "type": "object",
+              "properties": { "file": { "type": "string", "format": "binary", "description": "The WASM module; the first file part is used." } },
+              "required": ["file"]
+            } }
+          }
+        },
+        "responses": {
+          "200": { "description": "The decoded interface as ABI JSON, or the TypeScript client when format=ts.", "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Interface" } },
+            "text/plain": { "schema": { "type": "string", "description": "The generated TypeScript module." } }
+          } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "413": { "description": "The body exceeds the 524288-byte limit.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "422": { "description": "The module could not be decoded: it is not a WebAssembly module, it has no contractspecv0 section, or its spec entries do not convert.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/api/contracts/{id}/functions/{fn}": {
       "get": {
         "summary": "One function in detail",
