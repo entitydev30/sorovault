@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,7 @@ func TestLinkPreviewMetadata(t *testing.T) {
 
 func TestSitemapXML(t *testing.T) {
 	memory := store.NewMemory()
+	memory.SetClock(func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	reg := registry.New(stellartest.New(), spec.XDRDecoder{}, memory, registry.Options{Logger: log})
 	ui, err := web.NewServer(reg, log)
@@ -65,7 +67,7 @@ func TestSitemapXML(t *testing.T) {
 	assert.Equal(t, "urlset", sitemap.XMLName.Local)
 	require.Len(t, sitemap.URLs, 4)
 	assert.Equal(t, "https://registry.example.test/", sitemap.URLs[0].Loc)
-	assert.Contains(t, sitemap.URLs[1].LastMod, "T", "each contract lastmod comes from the store refresh timestamp")
+	assert.Equal(t, "2026-10-21T12:00:00Z", sitemap.URLs[1].LastMod)
 	for _, item := range sitemap.URLs[1:] {
 		assert.True(t, strings.HasPrefix(item.Loc, "https://registry.example.test/contracts/"))
 	}
