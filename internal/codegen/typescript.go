@@ -218,14 +218,14 @@ func (g *tsGen) writeClient(fns []model.Function) {
 		}
 		for _, in := range fn.Inputs {
 			if doc := strings.TrimSpace(in.Doc); doc != "" {
-				lines := strings.Split(doc, "\\n")
+				lines := strings.Split(doc, "\n")
 				for i := 1; i < len(lines); i++ {
 					lines[i] = strings.TrimSpace(lines[i])
 				}
-				docs = append(docs, "@param args."+in.Name+" "+strings.Join(lines, "\\n"))
+				docs = append(docs, "@param args."+in.Name+" "+strings.Join(lines, "\n"))
 			}
 		}
-		g.writeDoc("  ", strings.Join(docs, "\\n\\n"))
+		g.writeDoc("  ", strings.Join(docs, "\n\n"))
 
 		ret := "null"
 		if len(fn.Outputs) > 0 {
