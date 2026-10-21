@@ -243,7 +243,7 @@ func TestTypeScriptParameterDocumentation(t *testing.T) {
 		Functions: []model.Function{
 			{Name: "transfer", Doc: "Transfer tokens.", Inputs: []model.Param{
 				{Name: "to", Doc: "Recipient address.", Type: model.Scalar(model.KindAddress)},
-				{Name: "amount", Doc: "Amount in stroops. */ Keep exact.\\nSecond line.", Type: model.Scalar(model.KindI128)},
+				{Name: "amount", Doc: "Amount in stroops. */ Keep exact.\nSecond line.", Type: model.Scalar(model.KindI128)},
 				{Name: "memo", Type: model.Scalar(model.KindString)},
 			}},
 			{Name: "set_threshold", Inputs: []model.Param{
@@ -259,7 +259,7 @@ func TestTypeScriptParameterDocumentation(t *testing.T) {
 		" * @param args.amount Amount in stroops. *\\/ Keep exact.",
 		" * Second line.",
 		" * @param args.threshold Minimum required.",
-		"  /**\\n   * Minimum required *\\/ threshold.\\n   */\\n  threshold: sdk.u32;",
+		"  /**\n   * Minimum required *\\/ threshold.\n   */\n  threshold: sdk.u32;",
 	} {
 		assert.Contains(t, got, want)
 	}
