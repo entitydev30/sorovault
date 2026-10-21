@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,9 +51,8 @@ func TestSitemapXML(t *testing.T) {
 	server := httptest.NewServer(ui.Routes())
 	defer server.Close()
 
-	updated := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		c := store.Contract{ContractID: fmt.Sprintf("C%d", i), Network: "testnet", CurrentWasmHash: fmt.Sprintf("hash-%d", i), LastRefreshed: updated}
+		c := store.Contract{ContractID: fmt.Sprintf("C%d", i), Network: "testnet", CurrentWasmHash: fmt.Sprintf("hash-%d", i)}
 		require.NoError(t, memory.Save(context.Background(), c, &model.Interface{ABIVersion: model.ABIVersion}))
 	}
 	resp, err := server.Client().Get(server.URL + "/sitemap.xml")
