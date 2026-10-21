@@ -5,7 +5,11 @@
 {{define "anchor_link"}}<a class="anchor" href="#{{.ID}}" title="Link to {{.Label}}" aria-label="Link to {{.Label}}">#</a>{{end}}
 
 {{define "contract.html"}}
-{{template "page_head" "SoroVault · contract"}}
+{{template "page_head" .MetaTitle}}
+<meta name="description" content="{{.MetaDescription}}">
+<meta property="og:title" content="{{.MetaTitle}}">
+<meta property="og:description" content="{{.MetaDescription}}">
+{{if .MetaURL}}<meta property="og:url" content="{{.MetaURL}}">{{end}}
 
 <nav class="crumbs"><a href="/">← All contracts</a></nav>
 
