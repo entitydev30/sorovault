@@ -358,11 +358,11 @@ func (s *Server) contract(w http.ResponseWriter, r *http.Request) {
 		MetaTitle:       metaTitle,
 		MetaDescription: metaDescription,
 		MetaURL:         metaURL,
-		Contract:  *contract,
-		Spec:      *stored,
-		Versions:  versions,
-		Interface: stored.Interface,
-		IsCurrent: stored.WasmHash == contract.CurrentWasmHash,
+		Contract:        *contract,
+		Spec:            *stored,
+		Versions:        versions,
+		Interface:       stored.Interface,
+		IsCurrent:       stored.WasmHash == contract.CurrentWasmHash,
 	})
 }
 
