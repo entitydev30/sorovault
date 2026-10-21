@@ -427,14 +427,14 @@ type registerData struct {
 }
 
 type contractData struct {
-	MetaTitle string
+	MetaTitle       string
 	MetaDescription string
-	MetaURL string
-	Contract  store.Contract
-	Spec      store.Spec
-	Versions  []store.SpecVersion
-	Interface *model.Interface
-	IsCurrent bool
+	MetaURL         string
+	Contract        store.Contract
+	Spec            store.Spec
+	Versions        []store.SpecVersion
+	Interface       *model.Interface
+	IsCurrent       bool
 }
 
 // render writes a template, buffering it first so that a failure midway
