@@ -11,8 +11,10 @@ import (
 	"github.com/soroworks/sorovault/internal/store"
 )
 
-const sitemapPageSize = 200 // store.ListFilter caps individual queries at 200
-const contractsPerSitemap = 49999
+const (
+	sitemapPageSize = 200 // store.ListFilter caps individual queries at 200
+	contractsPerSitemap = 49999
+)
 
 type sitemapEntry struct {
 	Loc     string `xml:"loc"`
