@@ -57,6 +57,9 @@ func NewServer(reg *registry.Registry, log *slog.Logger) (*Server, error) {
 }
 
 // Routes returns the UI's routes, to be mounted at the server root.
+// SetPublicURL enables absolute canonical links and the sitemap.
+func (s *Server) SetPublicURL(base string) { s.publicURL = strings.TrimRight(base, "/") }
+
 func (s *Server) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Use(securityHeaders)
