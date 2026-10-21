@@ -4,17 +4,32 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
-	"net/url"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/soroworks/sorovault/internal/model"
+	"github.com/soroworks/sorovault/internal/registry"
+	"github.com/soroworks/sorovault/internal/spec"
+	"github.com/soroworks/sorovault/internal/stellar/stellartest"
 	"github.com/soroworks/sorovault/internal/store"
+	"github.com/soroworks/sorovault/internal/web"
 )
+
+type parsedSitemap struct {
+	XMLName xml.Name
+	URLs []struct {
+		Loc string `xml:"loc"`
+		LastMod string `xml:"lastmod"`
+	} `xml:"url"`
+}
 
 func TestLinkPreviewMetadata(t *testing.T) {
 	h := newHarness(t)
@@ -24,31 +39,39 @@ func TestLinkPreviewMetadata(t *testing.T) {
 	assert.Contains(t, body, `<meta property="og:title" content="Contract `+idA)
 	assert.Contains(t, body, `<meta property="og:description" content="testnet Soroban contract with 7 functions:`)
 	assert.Contains(t, body, "has_voted")
-	assert.NotContains(t, body, `<meta property="og:url"`, "no canonical URL is emitted without PUBLIC_URL")
+	assert.NotContains(t, body, `<meta property="og:url"`)
 }
 
 func TestSitemapXML(t *testing.T) {
-	h := newHarness(t)
-	h.register(t, idA)
-	h.register(t, idB)
-	h.reg.Store().(*store.Memory) // ensure in-memory store is exercised
-	resp, _ := h.get(t, "/sitemap.xml")
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	// h.server routes are already mounted; set the optional URL before routing
-	// in a separate test server when PUBLIC_URL is supplied.
-}
+	memory := store.NewMemory()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	reg := registry.New(stellartest.New(), spec.XDRDecoder{}, memory, registry.Options{Logger: log})
+	ui, err := web.NewServer(reg, log)
+	require.NoError(t, err)
+	ui.SetPublicURL("https://registry.example.test")
+	server := httptest.NewServer(ui.Routes())
+	defer server.Close()
 
-func TestSitemapPaginationAndEscaping(t *testing.T) {
-	h := newHarness(t)
+	updated := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		contract := store.Contract{
-			ContractID: fmt.Sprintf("C%d", i), Network: "testnet",
-			CurrentWasmHash: fmt.Sprintf("hash-%d", i),
-		}
-		require.NoError(t, h.store.Save(context.Background(), contract, &model.Interface{ABIVersion: model.ABIVersion}))
+		c := store.Contract{ContractID: fmt.Sprintf("C%d", i), Network: "testnet", CurrentWasmHash: fmt.Sprintf("hash-%d", i), LastRefreshed: updated}
+		require.NoError(t, memory.Save(context.Background(), c, &model.Interface{ABIVersion: model.ABIVersion}))
 	}
-	_ = time.Now
-	_ = url.PathEscape
-	_ = strings.Contains
-	_ = xml.Unmarshal
+	resp, err := server.Client().Get(server.URL + "/sitemap.xml")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/xml")
+	var sitemap parsedSitemap
+	require.NoError(t, xml.NewDecoder(resp.Body).Decode(&sitemap))
+	assert.Equal(t, "urlset", sitemap.XMLName.Local)
+	require.Len(t, sitemap.URLs, 4)
+	assert.Equal(t, "https://registry.example.test/", sitemap.URLs[0].Loc)
+	for _, item := range sitemap.URLs[1:] {
+		assert.True(t, strings.HasPrefix(item.Loc, "https://registry.example.test/contracts/"))
+	}
+	resp2, err := server.Client().Get(server.URL + "/sitemap-2.xml")
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
 }
