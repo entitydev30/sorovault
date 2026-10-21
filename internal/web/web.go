@@ -8,8 +8,8 @@ package web
 
 import (
 	"embed"
-	"fmt"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
