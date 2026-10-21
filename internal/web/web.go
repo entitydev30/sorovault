@@ -58,7 +58,9 @@ func NewServer(reg *registry.Registry, log *slog.Logger) (*Server, error) {
 
 // Routes returns the UI's routes, to be mounted at the server root.
 // SetPublicURL enables absolute canonical links and the sitemap.
-func (s *Server) SetPublicURL(base string) { s.publicURL = strings.TrimRight(base, "/") }
+func (s *Server) SetPublicURL(base string) {
+	s.publicURL = strings.TrimRight(base, "/")
+}
 
 func (s *Server) Routes() chi.Router {
 	r := chi.NewRouter()
@@ -338,12 +340,16 @@ func (s *Server) contract(w http.ResponseWriter, r *http.Request) {
 	if stored.Interface != nil {
 		count = len(stored.Interface.Functions)
 		for _, fn := range stored.Interface.Functions {
-			if len(names) == 5 { break }
+			if len(names) == 5 {
+				break
+			}
 			names = append(names, fn.Name)
 		}
 	}
 	metaDescription := fmt.Sprintf("%s Soroban contract with %d functions", contract.Network, count)
-	if len(names) > 0 { metaDescription += ": " + strings.Join(names, ", ") }
+	if len(names) > 0 {
+		metaDescription += ": " + strings.Join(names, ", ")
+	}
 	metaURL := ""
 	if s.publicURL != "" {
 		metaURL = s.publicURL + "/contracts/" + url.PathEscape(contract.ContractID) + "?network=" + url.QueryEscape(contract.Network)
