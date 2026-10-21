@@ -65,6 +65,7 @@ func TestSitemapXML(t *testing.T) {
 	assert.Equal(t, "urlset", sitemap.XMLName.Local)
 	require.Len(t, sitemap.URLs, 4)
 	assert.Equal(t, "https://registry.example.test/", sitemap.URLs[0].Loc)
+	assert.Contains(t, sitemap.URLs[1].LastMod, "T", "each contract lastmod comes from the store refresh timestamp")
 	for _, item := range sitemap.URLs[1:] {
 		assert.True(t, strings.HasPrefix(item.Loc, "https://registry.example.test/contracts/"))
 	}
