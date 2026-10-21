@@ -95,7 +95,10 @@ func (s *Server) writeSitemap(w http.ResponseWriter, r *http.Request, page int, 
 			return
 		}
 		current, err = list((page-1)*sitemapPageSize)
-		if err != nil { s.failSitemap(w, r, err); return }
+		if err != nil {
+			s.failSitemap(w, r, err)
+			return
+		}
 	}
 	set := sitemapURLSet{XMLNS: "http://www.sitemaps.org/schemas/sitemap/0.9"}
 	if root || page == 1 {
