@@ -40,6 +40,8 @@ func TestLinkPreviewMetadata(t *testing.T) {
 	assert.Contains(t, body, `<meta property="og:description" content="testnet Soroban contract with 7 functions:`)
 	assert.Contains(t, body, "has_voted")
 	assert.NotContains(t, body, `<meta property="og:url"`)
+	assert.Less(t, strings.Index(body, `<meta name="description"`), strings.Index(body, "</head>"))
+
 }
 
 func TestSitemapXML(t *testing.T) {
