@@ -24,8 +24,8 @@ import (
 
 type parsedSitemap struct {
 	XMLName xml.Name
-	URLs []struct {
-		Loc string `xml:"loc"`
+	URLs    []struct {
+		Loc     string `xml:"loc"`
 		LastMod string `xml:"lastmod"`
 	} `xml:"url"`
 }
