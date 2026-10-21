@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -99,6 +98,3 @@ func (s *Server) failSitemap(w http.ResponseWriter, r *http.Request, err error) 
 	s.log.ErrorContext(r.Context(), "sitemap listing failed", "error", err)
 	http.Error(w, "sitemap unavailable", http.StatusInternalServerError)
 }
-
-// Ensure the configured public base is used, never untrusted request Host.
-var _ = strings.TrimSpace
