@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	sitemapPageSize     = 200 // store.ListFilter caps individual queries at 200
+	// Each query is bounded by the store limit; each sitemap by the XML limit.
+	sitemapPageSize = 200
 	contractsPerSitemap = 49999
 )
 
