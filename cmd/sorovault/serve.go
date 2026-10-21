@@ -129,7 +129,9 @@ func newRouter(reg *registry.Registry, log *slog.Logger, refresh *refresher.Refr
 		return nil, err
 	}
 
-	if len(publicURL) > 0 { ui.SetPublicURL(publicURL[0]) }
+	if len(publicURL) > 0 {
+		ui.SetPublicURL(publicURL[0])
+	}
 
 	server := api.NewServer(reg, log)
 	if refresh != nil {
