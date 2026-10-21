@@ -355,9 +355,9 @@ func (s *Server) contract(w http.ResponseWriter, r *http.Request) {
 		metaURL = s.publicURL + "/contracts/" + url.PathEscape(contract.ContractID) + "?network=" + url.QueryEscape(contract.Network)
 	}
 	s.render(w, r, "contract.html", contractData{
-		MetaTitle: metaTitle,
+		MetaTitle:       metaTitle,
 		MetaDescription: metaDescription,
-		MetaURL: metaURL,
+		MetaURL:         metaURL,
 		Contract:  *contract,
 		Spec:      *stored,
 		Versions:  versions,
