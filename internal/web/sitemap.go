@@ -11,7 +11,8 @@ import (
 	"github.com/soroworks/sorovault/internal/store"
 )
 
-const sitemapPageSize = 49999 // reserve one URL for the registry index
+const sitemapPageSize = 200 // store.ListFilter caps individual queries at 200
+const contractsPerSitemap = 49999
 
 type sitemapEntry struct {
 	Loc     string `xml:"loc"`
@@ -60,17 +61,12 @@ func (s *Server) sitemapPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeSitemap(w http.ResponseWriter, r *http.Request, page int, root bool) {
-	// Fetch a single bounded page and use the total count to decide whether
-	// a sitemap index is needed. Never load the complete registry into memory.
-	list := func(offset int) (*store.ContractPage, error) {
-		return s.reg.Store().ListContracts(r.Context(), store.ListFilter{Limit: sitemapPageSize, Offset: offset})
-	}
-	first, err := list(0)
+	first, err := s.reg.Store().ListContracts(r.Context(), store.ListFilter{Limit: 1})
 	if err != nil {
 		s.failSitemap(w, r, err)
 		return
 	}
-	pages := (first.Total + sitemapPageSize - 1) / sitemapPageSize
+	pages := (first.Total + contractsPerSitemap - 1) / contractsPerSitemap
 	if pages == 0 {
 		pages = 1
 	}
@@ -86,27 +82,39 @@ func (s *Server) writeSitemap(w http.ResponseWriter, r *http.Request, page int, 
 		http.NotFound(w, r)
 		return
 	}
-	current := first
-	if page > 1 {
-		// Guard against integer overflow in the pagination offset.
-		maxInt := int(^uint(0) >> 1)
-		if page-1 > maxInt/sitemapPageSize {
-			http.NotFound(w, r)
-			return
+	if root {
+		page = 1
+	}
+	// The store caps each ListContracts call at 200 rows. Walk the selected
+	// sitemap page in bounded queries instead of assuming one call returns 50k.
+	maxInt := int(^uint(0) >> 1)
+	if page-1 > maxInt/contractsPerSitemap {
+		http.NotFound(w, r)
+		return
+	}
+	start := (page-1)*contractsPerSitemap
+	set := sitemapURLSet{XMLNS: "http://www.sitemaps.org/schemas/sitemap/0.9"}
+	if page == 1 {
+		set.URLs = append(set.URLs, sitemapEntry{Loc: s.publicURL + "/"})
+	}
+	for offset := start; offset < first.Total && offset-start < contractsPerSitemap; {
+		limit := sitemapPageSize
+		if remaining := contractsPerSitemap - (offset - start); remaining < limit {
+			limit = remaining
 		}
-		current, err = list((page-1)*sitemapPageSize)
+		result, err := s.reg.Store().ListContracts(r.Context(), store.ListFilter{Limit: limit, Offset: offset})
 		if err != nil {
 			s.failSitemap(w, r, err)
 			return
 		}
-	}
-	set := sitemapURLSet{XMLNS: "http://www.sitemaps.org/schemas/sitemap/0.9"}
-	if root || page == 1 {
-		set.URLs = append(set.URLs, sitemapEntry{Loc: s.publicURL + "/"})
-	}
-	for _, c := range current.Contracts {
-		link := s.publicURL + "/contracts/" + url.PathEscape(c.ContractID) + "?network=" + url.QueryEscape(c.Network)
-		set.URLs = append(set.URLs, sitemapEntry{Loc: link, LastMod: sitemapDate(c.LastRefreshed)})
+		if len(result.Contracts) == 0 {
+			break
+		}
+		for _, c := range result.Contracts {
+			link := s.publicURL + "/contracts/" + url.PathEscape(c.ContractID) + "?network=" + url.QueryEscape(c.Network)
+			set.URLs = append(set.URLs, sitemapEntry{Loc: link, LastMod: sitemapDate(c.LastRefreshed)})
+		}
+		offset += len(result.Contracts)
 	}
 	s.sendSitemap(w, set)
 }
