@@ -8,6 +8,7 @@ package web
 
 import (
 	"embed"
+	"fmt"
 	"errors"
 	"html/template"
 	"log/slog"
@@ -35,6 +36,7 @@ type Server struct {
 	reg       *registry.Registry
 	log       *slog.Logger
 	templates *template.Template
+	publicURL string
 }
 
 const contractsPerPage = 100
@@ -60,6 +62,8 @@ func (s *Server) Routes() chi.Router {
 	r.Use(securityHeaders)
 
 	r.Get("/", s.index)
+	r.Get("/sitemap.xml", s.sitemap)
+	r.Get("/sitemap-{page}.xml", s.sitemapPage)
 	r.Post("/contracts", s.register)
 	r.Get("/contracts/{id}", s.contract)
 	r.Get("/partials/contracts", s.contractRows)
@@ -325,7 +329,26 @@ func (s *Server) contract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metaTitle := "Contract " + contract.ContractID + " · SoroVault"
+	count := 0
+	var names []string
+	if stored.Interface != nil {
+		count = len(stored.Interface.Functions)
+		for _, fn := range stored.Interface.Functions {
+			if len(names) == 5 { break }
+			names = append(names, fn.Name)
+		}
+	}
+	metaDescription := fmt.Sprintf("%s Soroban contract with %d functions", contract.Network, count)
+	if len(names) > 0 { metaDescription += ": " + strings.Join(names, ", ") }
+	metaURL := ""
+	if s.publicURL != "" {
+		metaURL = s.publicURL + "/contracts/" + url.PathEscape(contract.ContractID) + "?network=" + url.QueryEscape(contract.Network)
+	}
 	s.render(w, r, "contract.html", contractData{
+		MetaTitle: metaTitle,
+		MetaDescription: metaDescription,
+		MetaURL: metaURL,
 		Contract:  *contract,
 		Spec:      *stored,
 		Versions:  versions,
@@ -395,6 +418,9 @@ type registerData struct {
 }
 
 type contractData struct {
+	MetaTitle string
+	MetaDescription string
+	MetaURL string
 	Contract  store.Contract
 	Spec      store.Spec
 	Versions  []store.SpecVersion
