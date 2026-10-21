@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	sitemapPageSize = 200 // store.ListFilter caps individual queries at 200
+	sitemapPageSize     = 200 // store.ListFilter caps individual queries at 200
 	contractsPerSitemap = 49999
 )
 
