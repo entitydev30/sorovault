@@ -323,6 +323,7 @@ func (m *Memory) ListVersions(ctx context.Context, network, contractID string) (
 			WasmHash:  s.WasmHash,
 			DecodedAt: s.DecodedAt,
 			Current:   s.WasmHash == c.CurrentWasmHash,
+			ObservedLedger: s.ObservedLedger,
 		})
 	}
 
