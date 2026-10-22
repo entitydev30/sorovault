@@ -153,6 +153,7 @@ func (m *Memory) Save(ctx context.Context, c Contract, iface *model.Interface) e
 		WasmHash:   c.CurrentWasmHash,
 		Interface:  cloned,
 		DecodedAt:  now,
+		ObservedLedger: c.ObservedLedger,
 	})
 	return nil
 }
