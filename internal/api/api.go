@@ -27,10 +27,12 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/soroworks/sorovault/internal/codegen"
+	"github.com/soroworks/sorovault/internal/refresher"
 	"github.com/soroworks/sorovault/internal/registry"
 	"github.com/soroworks/sorovault/internal/spec"
 	"github.com/soroworks/sorovault/internal/stellar"
 	"github.com/soroworks/sorovault/internal/store"
+	"github.com/soroworks/sorovault/internal/wasm"
 )
 
 // Server holds the API's dependencies.
@@ -38,6 +40,11 @@ type Server struct {
 	reg   *registry.Registry
 	log   *slog.Logger
 	cache *interfaceCache
+
+	// lastSweep, when set, reports the most recent automatic refresh
+	// sweep. It is nil when refresh is disabled, and GET /api/stats then
+	// omits the field.
+	lastSweep func() (refresher.SweepRecord, bool)
 }
 
 // NewServer builds an API server over a registry.
@@ -48,22 +55,34 @@ func NewServer(reg *registry.Registry, log *slog.Logger) *Server {
 	return &Server{reg: reg, log: log, cache: newInterfaceCache(interfaceCacheBytes)}
 }
 
+// SetLastSweep makes GET /api/stats report the most recent automatic
+// refresh sweep. Serve calls it when refresh is enabled; without it the
+// field is omitted, which is the honest answer when nothing sweeps.
+func (s *Server) SetLastSweep(fn func() (refresher.SweepRecord, bool)) {
+	s.lastSweep = fn
+}
+
 // Routes returns the API's routes, to be mounted under /api.
 func (s *Server) Routes() chi.Router {
 	r := chi.NewRouter()
 
 	r.Get("/contracts", s.listContracts)
 	r.Post("/contracts", s.registerContract)
+	r.Post("/contracts:batch", s.batchRegisterContracts)
 	r.Get("/wasm/{hash}", s.getWasmSpec)
 	r.Post("/wasm/{hash}", s.catalogWasm)
-	r.Post("/decode", s.decodeWasm)
+	r.Get("/wasm/{hash}/contracts", s.listWasmContracts)
 	r.Get("/contracts/{id}", s.getContract)
 	r.Put("/contracts/{id}/source", s.updateContractSource)
 	r.Post("/contracts/{id}/refresh", s.refreshContract)
 	r.Get("/contracts/{id}/versions", s.listVersions)
 	r.Get("/contracts/{id}/functions", s.listFunctions)
 	r.Get("/contracts/{id}/functions/{fn}", s.getFunction)
+	r.Get("/contracts/{id}/functions/{fn}/schema.json", s.getFunctionSchema)
 	r.Get("/contracts/{id}/client.ts", s.getTypeScriptClient)
+	r.Get("/stats", s.getStats)
+	r.Get("/upgrades", s.listUpgrades)
+	r.Get("/upgrades.atom", s.upgradesAtom)
 	r.Get("/openapi.json", serveOpenAPI)
 
 	return r
@@ -71,14 +90,24 @@ func (s *Server) Routes() chi.Router {
 
 var commitHash = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 
+// parseWasmHash normalises a WASM hash from the URL.
+//
+// A hash is the SHA-256 of the module, so it is 32 bytes of hexadecimal;
+// the hex is lower-cased because that is how the registry stores it.
+func parseWasmHash(raw string) (string, error) {
+	rawHash, err := hex.DecodeString(strings.TrimSpace(raw))
+	if err != nil || len(rawHash) != sha256.Size {
+		return "", fmt.Errorf("%w: %q", registry.ErrInvalidWasmHash, raw)
+	}
+	return hex.EncodeToString(rawHash), nil
+}
+
 func (s *Server) getWasmSpec(w http.ResponseWriter, r *http.Request) {
-	wasmHash := strings.TrimSpace(chi.URLParam(r, "hash"))
-	rawHash, err := hex.DecodeString(wasmHash)
-	if err != nil || len(rawHash) != 32 {
+	wasmHash, err := parseWasmHash(chi.URLParam(r, "hash"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid wasm hash")
 		return
 	}
-	wasmHash = hex.EncodeToString(rawHash)
 	network, err := s.network(r)
 	if err != nil {
 		s.fail(w, r, err)
@@ -90,6 +119,53 @@ func (s *Server) getWasmSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stored)
+}
+
+// listWasmContracts serves GET /api/wasm/{hash}/contracts.
+//
+// It answers "who else runs this code?", which is the question a
+// vulnerability in a shared WASM raises: every instance of a token
+// template, every vault a factory deployed. ?ever=true widens the answer
+// to the contracts that ran the code in the past and have since been
+// upgraded.
+func (s *Server) listWasmContracts(w http.ResponseWriter, r *http.Request) {
+	wasmHash, err := parseWasmHash(chi.URLParam(r, "hash"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid wasm hash")
+		return
+	}
+
+	network, err := s.network(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	q := r.URL.Query()
+	filter := store.WasmFilter{
+		Network:  network,
+		WasmHash: wasmHash,
+		Ever:     boolParam(q.Get("ever")),
+		Limit:    intParam(q.Get("limit"), 0),
+		Offset:   intParam(q.Get("offset"), 0),
+	}
+	filter.Normalize()
+
+	page, err := s.reg.Store().ListContractsByWasm(r.Context(), filter)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, wasmContractsResponse{
+		WasmHash:  wasmHash,
+		Network:   network,
+		Ever:      filter.Ever,
+		Contracts: page.Contracts,
+		Total:     page.Total,
+		Limit:     filter.Limit,
+		Offset:    filter.Offset,
+	})
 }
 
 func (s *Server) catalogWasm(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +397,59 @@ func Middleware(log *slog.Logger) []func(http.Handler) http.Handler {
 	}
 }
 
+// getStats serves GET /api/stats.
+func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.reg.Store().Stats(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	resp := statsResponse{
+		Networks:       stats.Networks,
+		Contracts:      stats.Contracts,
+		Versions:       stats.Versions,
+		LatestContract: stats.Latest,
+	}
+	if s.lastSweep != nil {
+		if record, ok := s.lastSweep(); ok {
+			resp.LastRefresh = &record
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// upgradeFilter reads the paging and network parameters shared by the JSON
+// and Atom forms of the upgrade feed.
+func upgradeFilter(r *http.Request) store.UpgradeFilter {
+	filter := store.UpgradeFilter{
+		Network: r.URL.Query().Get("network"),
+		Limit:   intParam(r.URL.Query().Get("limit"), 0),
+		Offset:  intParam(r.URL.Query().Get("offset"), 0),
+	}
+	filter.Normalize()
+	return filter
+}
+
+// listUpgrades serves GET /api/upgrades.
+func (s *Server) listUpgrades(w http.ResponseWriter, r *http.Request) {
+	filter := upgradeFilter(r)
+
+	page, err := s.reg.Store().ListUpgrades(r.Context(), filter)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, upgradeListResponse{
+		Upgrades: page.Upgrades,
+		Total:    page.Total,
+		Limit:    filter.Limit,
+		Offset:   filter.Offset,
+	})
+}
+
 // listContracts serves GET /api/contracts.
 func (s *Server) listContracts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -328,8 +457,12 @@ func (s *Server) listContracts(w http.ResponseWriter, r *http.Request) {
 	filter := store.ListFilter{
 		Network: q.Get("network"),
 		Query:   q.Get("q"),
-		Limit:   intParam(q.Get("limit"), 0),
-		Offset:  intParam(q.Get("offset"), 0),
+		// The exact-name filters are repeatable, and every one of them has
+		// to match.
+		Functions: q["function"],
+		Types:     q["type"],
+		Limit:     intParam(q.Get("limit"), 0),
+		Offset:    intParam(q.Get("offset"), 0),
 	}
 	filter.Normalize()
 
@@ -390,14 +523,17 @@ func (s *Server) getContract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, contractResponse{
-		ContractID: contract.ContractID,
-		Network:    contract.Network,
-		WasmHash:   cacheHash,
-		Name:       contract.Name,
-		FirstSeen:  contract.FirstSeen.UTC(),
-		DecodedAt:  cached.decodedAt,
-		Current:    cacheHash == contract.CurrentWasmHash,
-		Interface:  json.RawMessage(cached.body),
+		ContractID:   contract.ContractID,
+		Network:      contract.Network,
+		WasmHash:     cacheHash,
+		Name:         contract.Name,
+		SourceURL:    contract.SourceURL,
+		SourceCommit: contract.SourceCommit,
+		FirstSeen:    contract.FirstSeen.UTC(),
+		DecodedAt:    cached.decodedAt,
+		MissingSince: contract.MissingSince,
+		Current:      cacheHash == contract.CurrentWasmHash,
+		Interface:    json.RawMessage(cached.body),
 	})
 }
 
@@ -433,6 +569,52 @@ func (s *Server) getFunction(w http.ResponseWriter, r *http.Request) {
 		Signature:  fn.Signature(),
 		Function:   fn,
 	})
+}
+
+// getFunctionSchema serves GET /api/contracts/{id}/functions/{fn}/schema.json:
+// a JSON Schema (2020-12) for the function's arguments.
+//
+// A wallet or a dApp renders a form from the schema and validates what
+// the user typed before encoding it, so the schema has to say what each
+// argument may be. It is derived from the same stored interface the rest
+// of the API serves, and follows the same type conventions as the typed
+// client.
+func (s *Server) getFunctionSchema(w http.ResponseWriter, r *http.Request) {
+	contractID := chi.URLParam(r, "id")
+	fnName := chi.URLParam(r, "fn")
+
+	network, err := s.network(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	wasmHash := strings.TrimSpace(r.URL.Query().Get("wasm_hash"))
+	stored, err := s.reg.Store().GetSpec(r.Context(), network, contractID, wasmHash)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	fn, ok := stored.Interface.Function(fnName)
+	if !ok {
+		writeError(w, http.StatusNotFound,
+			"no function "+strconv.Quote(fnName)+" in contract "+contractID)
+		return
+	}
+
+	schema, err := codegen.JSONSchema(stored.Interface, fn, codegen.Source{
+		ContractID: stored.ContractID,
+		Network:    stored.Network,
+		WasmHash:   stored.WasmHash,
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/schema+json")
+	_, _ = w.Write(schema)
 }
 
 // listFunctions serves GET /api/contracts/{id}/functions.
@@ -518,6 +700,96 @@ func (s *Server) registerContract(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, result)
 }
 
+// batchRegisterContracts serves POST /api/contracts:batch.
+//
+// Seeding a registry over the API would otherwise take one request per
+// contract. The contracts are registered one after another, so the batch
+// draws on the registry's concurrency budget once per contract rather than
+// all at once, and one failure does not stop the rest: every contract gets
+// a result of its own.
+func (s *Server) batchRegisterContracts(w http.ResponseWriter, r *http.Request) {
+	var req batchRegisterRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.ContractIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "contract_ids must not be empty")
+		return
+	}
+	if len(req.ContractIDs) > MaxBatchContracts {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"at most %d contract IDs per batch, got %d", MaxBatchContracts, len(req.ContractIDs)))
+		return
+	}
+
+	results := make([]batchResult, 0, len(req.ContractIDs))
+	for _, contractID := range req.ContractIDs {
+		if r.Context().Err() != nil {
+			// The client has gone; there is nobody left to answer.
+			return
+		}
+		results = append(results, s.registerOne(r, contractID))
+	}
+
+	response := batchResponse{Results: results}
+	for _, result := range results {
+		switch result.Status {
+		case batchStatusCreated:
+			response.Created++
+		case batchStatusUnchanged:
+			response.Unchanged++
+		case batchStatusChanged:
+			response.Changed++
+		default:
+			response.Failed++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// registerOne registers a single contract and turns the outcome into one
+// result of a batch.
+func (s *Server) registerOne(r *http.Request, contractID string) batchResult {
+	contractID = strings.TrimSpace(contractID)
+	if contractID == "" {
+		return batchResult{
+			Status: batchStatusError,
+			Code:   http.StatusBadRequest,
+			Error:  "contract_id is required",
+		}
+	}
+
+	result, err := s.reg.Register(r.Context(), contractID)
+	if err != nil {
+		status, message := s.errorStatus(r, err)
+		return batchResult{
+			ContractID: contractID,
+			Status:     batchStatusError,
+			Code:       status,
+			Error:      message,
+		}
+	}
+
+	status := batchStatusUnchanged
+	switch {
+	case result.Created:
+		status = batchStatusCreated
+	case result.Changed:
+		status = batchStatusChanged
+	}
+
+	return batchResult{
+		ContractID: contractID,
+		Status:     status,
+		Created:    result.Created,
+		Changed:    result.Changed,
+		Contract:   &result.Contract,
+		Interface:  result.Interface,
+	}
+}
+
 // refreshContract serves POST /api/contracts/{id}/refresh.
 func (s *Server) refreshContract(w http.ResponseWriter, r *http.Request) {
 	result, err := s.reg.Refresh(r.Context(), chi.URLParam(r, "id"))
@@ -538,37 +810,54 @@ func (s *Server) network(r *http.Request) (string, error) {
 }
 
 // fail maps a domain error onto a status code and writes it.
+func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
+	if ctxErr := r.Context().Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		// The client went away; there is nobody left to read a response.
+		return
+	}
+
+	status, message := s.errorStatus(r, err)
+	if errors.Is(err, registry.ErrBusy) {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(s.reg.AcquireTimeout())))
+	}
+	writeError(w, status, message)
+}
+
+// errorStatus maps a domain error onto the status code it deserves and the
+// message that may be shown to the caller.
 //
 // Everything unrecognised becomes a 500 with a generic body, so an internal
 // failure cannot leak a connection string or query text to a caller.
-func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
+func (s *Server) errorStatus(r *http.Request, err error) (int, string) {
 	switch {
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, stellar.ErrContractNotFound), errors.Is(err, stellar.ErrWasmNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		return http.StatusNotFound, err.Error()
 
 	case errors.Is(err, stellar.ErrNoWasm), errors.Is(err, spec.ErrNoSpecSection):
 		// The request was well-formed and the contract exists; it just has
 		// no interface to serve.
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return http.StatusUnprocessableEntity, err.Error()
+
+	case errors.Is(err, spec.ErrLimitExceeded), errors.Is(err, wasm.ErrModuleTooLarge):
+		// The module or its spec section is larger or deeper than SoroVault
+		// will decode. That is a property of the contract, not a server
+		// fault, so it is a 422 with the limit in the message rather than a
+		// 500.
+		return http.StatusUnprocessableEntity, err.Error()
 
 	case errors.Is(err, registry.ErrNetworkMismatch):
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return http.StatusServiceUnavailable, err.Error()
 
 	case errors.Is(err, registry.ErrBusy):
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(s.reg.AcquireTimeout())))
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return http.StatusServiceUnavailable, err.Error()
 
 	case isBadContractID(err), errors.Is(err, registry.ErrInvalidWasmHash):
-		writeError(w, http.StatusBadRequest, err.Error())
-
-	case errors.Is(err, r.Context().Err()) && r.Context().Err() != nil:
-		// The client went away; there is nobody left to read a response.
-		return
+		return http.StatusBadRequest, err.Error()
 
 	default:
 		s.log.ErrorContext(r.Context(), "request failed",
 			"path", r.URL.Path, "method", r.Method, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		return http.StatusInternalServerError, "internal error"
 	}
 }
 
@@ -587,6 +876,17 @@ func intParam(raw string, fallback int) int {
 	v, err := strconv.Atoi(raw)
 	if err != nil {
 		return fallback
+	}
+	return v
+}
+
+// boolParam parses a query parameter as a flag, treating anything
+// unparseable as false: the parameter only ever widens an answer, so a
+// malformed value must not widen it by accident.
+func boolParam(raw string) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return false
 	}
 	return v
 }
