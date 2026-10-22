@@ -252,7 +252,9 @@ func (r *Registry) Register(ctx context.Context, contractID string) (*Result, er
 	}
 
 	ledger, err := r.observedLedger(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	record := store.Contract{
 		ContractID:      contractID,
 		Network:         network,
@@ -402,7 +404,9 @@ func (r *Registry) Refresh(ctx context.Context, contractID string) (*Result, err
 	}
 
 	ledger, err := r.observedLedger(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	record := *existing
 	record.ObservedLedger = ledger
 	record.CurrentWasmHash = contract.WasmHash
@@ -428,10 +432,16 @@ func (r *Registry) Refresh(ctx context.Context, contractID string) (*Result, err
 // observedLedger uses the RPC ledger clock when available. Test fetchers
 // without a ledger source retain null for compatibility.
 func (r *Registry) observedLedger(ctx context.Context) (*uint32, error) {
-	f, ok := r.fetcher.(interface { LatestLedger(context.Context) (uint32, error) })
-	if !ok { return nil, nil }
+	f, ok := r.fetcher.(interface {
+		LatestLedger(context.Context) (uint32, error)
+	})
+	if !ok {
+		return nil, nil
+	}
 	ledger, err := f.LatestLedger(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return &ledger, nil
 }
 
