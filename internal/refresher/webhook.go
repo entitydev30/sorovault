@@ -155,7 +155,7 @@ func (w *Webhook) Notify(ctx context.Context, change Change) error {
 	if err != nil {
 		return fmt.Errorf("refresher: posting webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// The body is drained, up to a point, so the connection can be reused
 	// without trusting the receiver to send a small one.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))

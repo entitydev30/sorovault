@@ -1,3 +1,10 @@
+# `make up` passes --build, so local development still compiles the image.
+# Without a build, compose uses the published image (or SOROVAULT_IMAGE, for
+# a pinned release) and does not need the Go toolchain.
+x-sorovault: &sorovault
+  image: ${SOROVAULT_IMAGE:-ghcr.io/soroworks/sorovault:latest}
+  build: .
+
 services:
   db:
     image: postgres:16-alpine
@@ -18,7 +25,7 @@ services:
   # Applies pending schema migrations, then exits. The API waits for it so a
   # fresh stack comes up in the right order.
   migrate:
-    build: .
+    <<: *sorovault
     command: ["migrate"]
     environment:
       DATABASE_URL: postgres://sorovault:sorovault@db:5432/sorovault?sslmode=disable
@@ -28,7 +35,7 @@ services:
     restart: on-failure
 
   api:
-    build: .
+    <<: *sorovault
     command: ["serve"]
     environment:
       DATABASE_URL: postgres://sorovault:sorovault@db:5432/sorovault?sslmode=disable

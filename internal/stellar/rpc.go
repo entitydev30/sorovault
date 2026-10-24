@@ -122,7 +122,7 @@ func (f *RPCFetcher) instanceWasmHash(ctx context.Context, contractID string) (x
 		return zero, fmt.Errorf("%w: %s", ErrNoWasm, contractID)
 	}
 
-	return xdr.Hash(wasmHash), nil
+	return wasmHash, nil
 }
 
 // codeByHash reads the contract code entry stored under a WASM hash.

@@ -13,7 +13,7 @@ import (
 	"github.com/soroworks/sorovault/internal/config"
 )
 
-const testDatabaseURL = "postgres://user:pass@localhost:5432/sorovault"
+const testDatabaseURL = "postgres://user:pass@localhost:5432/sorovault" //nolint:gosec // fixture, not a real credential
 
 // setEnv applies a set of variables for one test, clearing any others the
 // package reads so the ambient environment cannot influence the result.

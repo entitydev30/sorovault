@@ -181,7 +181,7 @@ func DatabaseURLFromEnv() (string, error) {
 
 	// The read error names the path; the contents are a credential, so they
 	// must not reach the error, a log line or a stack trace.
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // path is an operator-provided secret file setting
 	if err != nil {
 		return "", fmt.Errorf("config: DATABASE_URL_FILE: %w", err)
 	}

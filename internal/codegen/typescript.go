@@ -41,6 +41,22 @@ var reservedTypeNames = map[string]bool{
 	"String": true, "Number": true, "Boolean": true, "Symbol": true,
 	"BigInt": true, "Error": true, "Date": true, "Function": true,
 	"Record": true, "Partial": true, "Readonly": true,
+	"abstract": true, "any": true, "as": true, "asserts": true, "bigint": true,
+	"boolean": true, "break": true, "case": true, "catch": true, "class": true,
+	"const": true, "constructor": true, "continue": true, "debugger": true,
+	"declare": true, "default": true, "delete": true, "do": true, "else": true,
+	"enum": true, "export": true, "extends": true, "false": true, "finally": true,
+	"for": true, "from": true, "function": true, "get": true, "if": true,
+	"implements": true, "import": true, "in": true, "infer": true,
+	"instanceof": true, "interface": true, "is": true, "keyof": true, "let": true,
+	"module": true, "namespace": true, "never": true, "new": true, "null": true,
+	"number": true, "object": true, "package": true, "private": true,
+	"protected": true, "public": true, "readonly": true, "return": true,
+	"require": true, "global": true, "set": true, "static": true, "string": true,
+	"super": true, "switch": true, "symbol": true, "this": true, "throw": true,
+	"true": true, "try": true, "type": true, "typeof": true, "undefined": true,
+	"unique": true, "unknown": true, "var": true, "void": true, "while": true,
+	"with": true, "yield": true,
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
@@ -205,27 +221,7 @@ func (g *tsGen) writeClient(fns []model.Function) {
 	g.b.WriteString("\n/** Typed methods of the contract. Each one simulates on call; sign and send the result to submit. */\n")
 	g.b.WriteString("export interface Client {\n")
 	for _, fn := range fns {
-		if !identifier.MatchString(fn.Name) {
-			g.fail(fmt.Errorf("codegen: function name %q is not a valid identifier", fn.Name))
-			return
-		}
-		// Arguments are properties of the single args object, so JSDoc
-		// must use args.<name> to attach hover documentation correctly.
-		// Reuse writeDoc for escaping */ and formatting multiline docs.
-		var docs []string
-		if strings.TrimSpace(fn.Doc) != "" {
-			docs = append(docs, strings.TrimSpace(fn.Doc))
-		}
-		for _, in := range fn.Inputs {
-			if doc := strings.TrimSpace(in.Doc); doc != "" {
-				lines := strings.Split(doc, "\n")
-				for i := 1; i < len(lines); i++ {
-					lines[i] = strings.TrimSpace(lines[i])
-				}
-				docs = append(docs, "@param args."+in.Name+" "+strings.Join(lines, "\n"))
-			}
-		}
-		g.writeDoc("  ", strings.Join(docs, "\n\n"))
+		g.writeDoc("  ", fn.Doc)
 
 		ret := "null"
 		if len(fn.Outputs) > 0 {
@@ -234,7 +230,7 @@ func (g *tsGen) writeClient(fns []model.Function) {
 		result := "Promise<sdk.AssembledTransaction<" + ret + ">>"
 
 		if len(fn.Inputs) == 0 {
-			fmt.Fprintf(&g.b, "  %s(options?: sdk.MethodOptions): %s;\n", fn.Name, result)
+			fmt.Fprintf(&g.b, "  %s(options?: sdk.MethodOptions): %s;\n", propertyKey(fn.Name), result)
 			continue
 		}
 		params := make([]string, len(fn.Inputs))
@@ -242,7 +238,7 @@ func (g *tsGen) writeClient(fns []model.Function) {
 			params[i] = propertyKey(in.Name) + ": " + g.tsType(in.Type)
 		}
 		fmt.Fprintf(&g.b, "  %s(args: { %s }, options?: sdk.MethodOptions): %s;\n",
-			fn.Name, strings.Join(params, "; "), result)
+			propertyKey(fn.Name), strings.Join(params, "; "), result)
 	}
 	g.b.WriteString("}\n")
 
@@ -328,6 +324,9 @@ func (g *tsGen) fail(err error) {
 func typeName(name string) string {
 	if reservedTypeNames[name] {
 		return name + "_"
+	}
+	if !identifier.MatchString(name) {
+		return fmt.Sprintf("ContractType_%x", name)
 	}
 	return name
 }

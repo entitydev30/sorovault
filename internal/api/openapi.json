@@ -172,6 +172,40 @@
         }
       }
     },
+    "/api/contracts/{id}/functions/{fn}/schema.json": {
+      "get": {
+        "summary": "A JSON Schema for a function's arguments",
+        "description": "A JSON Schema (2020-12) describing the function's arguments object, derived from the contract's stored interface. A wallet or a dApp can render a form from it and validate the user's input before encoding it. Integers wider than 53 bits are decimal strings, addresses and byte strings carry patterns, options are nullable, and user-defined types become $defs.",
+        "operationId": "getFunctionSchema",
+        "parameters": [
+          { "$ref": "#/components/parameters/id" },
+          { "name": "fn", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/network" },
+          { "$ref": "#/components/parameters/wasmHash" }
+        ],
+        "responses": {
+          "200": { "description": "The schema.", "content": { "application/schema+json": { "schema": { "$ref": "#/components/schemas/JSONSchema" }, "examples": { "hasVoted": { "$ref": "#/components/examples/FunctionSchema" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/contracts/{id}/functions/{fn}/example.json": {
+      "get": {
+        "summary": "An example argument list for a function",
+        "description": "One example argument object for the function: a deterministic placeholder value of each argument's type, keyed as the function's JSON Schema spells them. A client takes it, replaces the fields it cares about, and has its first request. Derived from the same stored interface the schema is, so the example validates where the schema accepts.",
+        "operationId": "getFunctionExample",
+        "parameters": [
+          { "$ref": "#/components/parameters/id" },
+          { "name": "fn", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/network" },
+          { "$ref": "#/components/parameters/wasmHash" }
+        ],
+        "responses": {
+          "200": { "description": "The example argument object.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FunctionExample" }, "examples": { "hasVoted": { "$ref": "#/components/examples/FunctionExample" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/contracts/{id}/functions": {
       "get": {
         "summary": "List a contract's function signatures",
@@ -184,6 +218,22 @@
         ],
         "responses": {
           "200": { "description": "Function names and signatures.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FunctionList" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/contracts/{id}/events": {
+      "get": {
+        "summary": "List a contract's event definitions",
+        "operationId": "listEvents",
+        "description": "The events a contract declares, each with its topics, data fields and the data payload's packing, for the indexers that react to them without reading the whole interface. A contract that declares none answers with an empty list.",
+        "parameters": [
+          { "$ref": "#/components/parameters/id" },
+          { "$ref": "#/components/parameters/network" },
+          { "$ref": "#/components/parameters/wasmHash" }
+        ],
+        "responses": {
+          "200": { "description": "The event definitions.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventList" } } } },
           "404": { "$ref": "#/components/responses/NotFound" }
         }
       }
@@ -398,6 +448,21 @@
           "inputs": [{ "name": "nullifier", "type": { "kind": "bytes_n", "display": "BytesN<32>", "n": 32 } }],
           "outputs": [{ "kind": "bool", "display": "bool" }]
         }
+      } },
+      "FunctionSchema": { "value": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "urn:sorovault:contract:CDZZXVGUCLBUTE3WDD6TF2NXPTBPOYTVPPBBIZMSPVIQLUG226XJ4PAN:testnet:c618dae264864ccf446a3c7db27da80c7c83e840131242cc2fe9cd32a2a20781:has_voted",
+        "title": "has_voted arguments",
+        "description": "Arguments of has_voted on contract CDZZXVGUCLBUTE3WDD6TF2NXPTBPOYTVPPBBIZMSPVIQLUG226XJ4PAN (testnet).",
+        "type": "object",
+        "properties": {
+          "nullifier": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+        },
+        "required": ["nullifier"],
+        "additionalProperties": false
+      } },
+      "FunctionExample": { "value": {
+        "nullifier": "0000000000000000000000000000000000000000000000000000000000000000"
       } },
       "VersionList": { "value": {
         "contract_id": "CDZZXVGUCLBUTE3WDD6TF2NXPTBPOYTVPPBBIZMSPVIQLUG226XJ4PAN",
@@ -672,6 +737,40 @@
         },
         "required": ["name", "signature"],
         "additionalProperties": false
+      },
+      "EventList": {
+        "type": "object",
+        "properties": {
+          "contract_id": { "$ref": "#/components/schemas/ContractID" },
+          "network": { "type": "string" },
+          "wasm_hash": { "$ref": "#/components/schemas/WasmHash" },
+          "events": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Event" }
+          }
+        },
+        "required": ["contract_id", "network", "wasm_hash", "events"]
+      },
+      "JSONSchema": {
+        "type": "object",
+        "description": "A JSON Schema (2020-12) document.",
+        "properties": {
+          "$schema": { "type": "string" },
+          "$id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "type": { "type": "string" },
+          "properties": { "type": "object", "additionalProperties": true },
+          "required": { "type": "array", "items": { "type": "string" } },
+          "additionalProperties": { "type": "boolean" },
+          "$defs": { "type": "object", "additionalProperties": true }
+        },
+        "required": ["$schema", "type"]
+      },
+      "FunctionExample": {
+        "type": "object",
+        "description": "An example argument object. Keys are the function's argument names, each value a deterministic placeholder of that argument's type that satisfies the argument as the function's JSON Schema spells it: integers wider than 53 bits are decimal strings, addresses and byte strings are strings, options are null, and empty collections are empty.",
+        "additionalProperties": true
       },
       "VersionList": {
         "type": "object",
