@@ -496,7 +496,7 @@ func TestDecodeFixture(t *testing.T) {
 	got = append(got, '\n')
 
 	if *update {
-		require.NoError(t, os.WriteFile(filepath.Clean(goldenPath), got, 0o644))
+		require.NoError(t, os.WriteFile(filepath.Clean(goldenPath), got, 0o600)) //nolint:gosec // test-owned golden path
 		t.Logf("wrote %s", goldenPath)
 	}
 

@@ -96,7 +96,14 @@ func (s *countingStore) reads() int {
 	return s.specReads
 }
 
-func (h *harness) do(t *testing.T, method, path, body string) (*http.Response, []byte) {
+// response is the part of an *http.Response the tests inspect. The harness
+// consumes and closes the body before returning, so callers cannot leak it.
+type response struct {
+	StatusCode int
+	Header     http.Header
+}
+
+func (h *harness) do(t *testing.T, method, path, body string) (*response, []byte) {
 	t.Helper()
 
 	var reader io.Reader
@@ -112,11 +119,11 @@ func (h *harness) do(t *testing.T, method, path, body string) (*http.Response, [
 
 	resp, err := h.server.Client().Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return resp, raw
+	require.NoError(t, resp.Body.Close())
+	return &response{StatusCode: resp.StatusCode, Header: resp.Header}, raw
 }
 
 func (h *harness) decode(t *testing.T, raw []byte) map[string]any {
@@ -969,7 +976,7 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 
 	resp, err := srv.Client().Get(srv.URL + "/api/contracts")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)

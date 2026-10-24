@@ -334,35 +334,27 @@ func (s *Server) contract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metaTitle := "Contract " + contract.ContractID + " · SoroVault"
-	count := 0
-	var names []string
-	if stored.Interface != nil {
-		count = len(stored.Interface.Functions)
-		for _, fn := range stored.Interface.Functions {
-			if len(names) == 5 {
-				break
-			}
-			names = append(names, fn.Name)
+	// Gather all networks this contract is registered on.
+	allNetworks, err := s.reg.Store().ListNetworks(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	contractNetworks := make([]string, 0, len(allNetworks))
+	for _, net := range allNetworks {
+		_, err2 := s.reg.Store().GetContract(r.Context(), net, contractID)
+		if err2 == nil {
+			contractNetworks = append(contractNetworks, net)
 		}
 	}
-	metaDescription := fmt.Sprintf("%s Soroban contract with %d functions", contract.Network, count)
-	if len(names) > 0 {
-		metaDescription += ": " + strings.Join(names, ", ")
-	}
-	metaURL := ""
-	if s.publicURL != "" {
-		metaURL = s.publicURL + "/contracts/" + url.PathEscape(contract.ContractID) + "?network=" + url.QueryEscape(contract.Network)
-	}
+
 	s.render(w, r, "contract.html", contractData{
-		MetaTitle:       metaTitle,
-		MetaDescription: metaDescription,
-		MetaURL:         metaURL,
-		Contract:        *contract,
-		Spec:            *stored,
-		Versions:        versions,
-		Interface:       stored.Interface,
-		IsCurrent:       stored.WasmHash == contract.CurrentWasmHash,
+		Contract:  *contract,
+		Spec:      *stored,
+		Versions:  versions,
+		Interface: stored.Interface,
+		IsCurrent: stored.WasmHash == contract.CurrentWasmHash,
+		Networks:  contractNetworks,
 	})
 }
 
@@ -427,14 +419,12 @@ type registerData struct {
 }
 
 type contractData struct {
-	MetaTitle       string
-	MetaDescription string
-	MetaURL         string
-	Contract        store.Contract
-	Spec            store.Spec
-	Versions        []store.SpecVersion
-	Interface       *model.Interface
-	IsCurrent       bool
+	Contract  store.Contract
+	Spec      store.Spec
+	Versions  []store.SpecVersion
+	Interface *model.Interface
+	IsCurrent bool
+	Networks  []string
 }
 
 // render writes a template, buffering it first so that a failure midway
