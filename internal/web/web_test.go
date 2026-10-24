@@ -58,7 +58,14 @@ func newHarness(t *testing.T) *harness {
 	return &harness{server: srv, fake: fake, reg: reg, store: memory}
 }
 
-func (h *harness) get(t *testing.T, path string) (*http.Response, string) {
+// response is the part of an *http.Response the tests inspect. The harness
+// consumes and closes the body before returning, so callers cannot leak it.
+type response struct {
+	StatusCode int
+	Header     http.Header
+}
+
+func (h *harness) get(t *testing.T, path string) (*response, string) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, h.server.URL+path, nil)
@@ -66,16 +73,16 @@ func (h *harness) get(t *testing.T, path string) (*http.Response, string) {
 
 	resp, err := h.server.Client().Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return resp, string(raw)
+	require.NoError(t, resp.Body.Close())
+	return &response{StatusCode: resp.StatusCode, Header: resp.Header}, string(raw)
 }
 
 // postForm submits the registration form without following the redirect, so
 // a test can assert on the status and Location it produced.
-func (h *harness) postForm(t *testing.T, path string, form url.Values, headers map[string]string) (*http.Response, string) {
+func (h *harness) postForm(t *testing.T, path string, form url.Values, headers map[string]string) (*response, string) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
@@ -91,11 +98,11 @@ func (h *harness) postForm(t *testing.T, path string, form url.Values, headers m
 	}}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return resp, string(raw)
+	require.NoError(t, resp.Body.Close())
+	return &response{StatusCode: resp.StatusCode, Header: resp.Header}, string(raw)
 }
 
 // deploy puts the real testnet fixture on the fake network under the given

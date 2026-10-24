@@ -89,7 +89,7 @@ func renderMarkdown(doc string) template.HTML {
 	var buf bytes.Buffer
 	if err := markdown.Convert([]byte(doc), &buf); err != nil {
 		// A document that cannot be parsed is shown as it came, escaped.
-		return template.HTML(template.HTMLEscapeString(doc))
+		return template.HTML(template.HTMLEscapeString(doc)) //nolint:gosec // explicitly escaped above
 	}
-	return template.HTML(markdownPolicy.Sanitize(buf.String()))
+	return template.HTML(markdownPolicy.Sanitize(buf.String())) //nolint:gosec // sanitised by the allow-list above
 }

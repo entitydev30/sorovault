@@ -7,6 +7,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -27,6 +28,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/soroworks/sorovault/internal/codegen"
+	"github.com/soroworks/sorovault/internal/model"
 	"github.com/soroworks/sorovault/internal/refresher"
 	"github.com/soroworks/sorovault/internal/registry"
 	"github.com/soroworks/sorovault/internal/spec"
@@ -37,9 +39,10 @@ import (
 
 // Server holds the API's dependencies.
 type Server struct {
-	reg   *registry.Registry
-	log   *slog.Logger
-	cache *interfaceCache
+	reg       *registry.Registry
+	log       *slog.Logger
+	cache     *interfaceCache
+	rateLimit *clientLimiter
 
 	// lastSweep, when set, reports the most recent automatic refresh
 	// sweep. It is nil when refresh is disabled, and GET /api/stats then
@@ -65,21 +68,23 @@ func (s *Server) SetLastSweep(fn func() (refresher.SweepRecord, bool)) {
 // Routes returns the API's routes, to be mounted under /api.
 func (s *Server) Routes() chi.Router {
 	r := chi.NewRouter()
+	r.Use(compressResponses("application/json", "text/plain"))
 
 	r.Get("/contracts", s.listContracts)
-	r.Post("/contracts", s.registerContract)
-	r.Post("/decode", s.decodeWasm)
+	r.Post("/contracts", s.rateLimited(s.registerContract))
 	r.Post("/contracts:batch", s.batchRegisterContracts)
 	r.Get("/wasm/{hash}", s.getWasmSpec)
 	r.Post("/wasm/{hash}", s.catalogWasm)
 	r.Get("/wasm/{hash}/contracts", s.listWasmContracts)
 	r.Get("/contracts/{id}", s.getContract)
 	r.Put("/contracts/{id}/source", s.updateContractSource)
-	r.Post("/contracts/{id}/refresh", s.refreshContract)
+	r.Post("/contracts/{id}/refresh", s.rateLimited(s.refreshContract))
 	r.Get("/contracts/{id}/versions", s.listVersions)
 	r.Get("/contracts/{id}/functions", s.listFunctions)
+	r.Get("/contracts/{id}/events", s.listEvents)
 	r.Get("/contracts/{id}/functions/{fn}", s.getFunction)
 	r.Get("/contracts/{id}/functions/{fn}/schema.json", s.getFunctionSchema)
+	r.Get("/contracts/{id}/functions/{fn}/example.json", s.getFunctionExample)
 	r.Get("/contracts/{id}/client.ts", s.getTypeScriptClient)
 	r.Get("/stats", s.getStats)
 	r.Get("/upgrades", s.listUpgrades)
@@ -381,18 +386,130 @@ func (s *Server) getTypeScriptClient(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.URL.Query().Get("download") != "" {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+contractID+`.client.ts"`)
 	}
-	_, _ = w.Write([]byte(source))
+	_, _ = w.Write([]byte(source)) //nolint:gosec // generated TypeScript, served as text/plain with nosniff
+}
+
+// minCompressBytes is the size below which the extra encoding work and
+// headers cost more than they save. Health checks, small errors and tiny
+// listings stay plain.
+const minCompressBytes = 1024
+
+// compressResponses gzips large responses of the listed content types when
+// the client accepts gzip.
+//
+// It buffers the response before deciding, because chi's compressor decides
+// at WriteHeader time while the size is only known after the body is written.
+// API responses are bounded and already materialised in memory, so the delay
+// is not visible; the win is that a small response never carries a
+// Content-Encoding it did not need.
+func compressResponses(types ...string) func(http.Handler) http.Handler {
+	compressor := middleware.NewCompressor(5, types...)
+	compressible := make(map[string]struct{}, len(types))
+	for _, contentType := range types {
+		compressible[contentType] = struct{}{}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			buffer := newResponseBuffer()
+			next.ServeHTTP(buffer, r)
+
+			contentType, _, _ := strings.Cut(buffer.Header().Get("Content-Type"), ";")
+			_, allowed := compressible[contentType]
+			if buffer.body.Len() < minCompressBytes || !allowed ||
+				buffer.Header().Get("Content-Encoding") != "" {
+				buffer.writeTo(w)
+				return
+			}
+
+			compressor.Handler(http.HandlerFunc(func(cw http.ResponseWriter, _ *http.Request) {
+				copyHeader(cw.Header(), buffer.Header())
+				cw.WriteHeader(buffer.status)
+				_, _ = cw.Write(buffer.body.Bytes())
+			})).ServeHTTP(w, r)
+		})
+	}
+}
+
+// acceptsGzip reports whether the header allows gzip, honouring an explicit
+// q=0 refusal.
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(part, ";")
+		if !strings.EqualFold(strings.TrimSpace(fields[0]), "gzip") {
+			continue
+		}
+		for _, parameter := range fields[1:] {
+			name, value, ok := strings.Cut(parameter, "=")
+			if ok && strings.EqualFold(strings.TrimSpace(name), "q") &&
+				strings.TrimSpace(value) == "0" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// responseBuffer records a response so compression can be decided once its
+// full size is known.
+type responseBuffer struct {
+	header      http.Header
+	status      int
+	body        bytes.Buffer
+	wroteHeader bool
+}
+
+func newResponseBuffer() *responseBuffer {
+	return &responseBuffer{header: make(http.Header), status: http.StatusOK}
+}
+
+func (b *responseBuffer) Header() http.Header { return b.header }
+
+func (b *responseBuffer) WriteHeader(status int) {
+	if b.wroteHeader {
+		return
+	}
+	b.wroteHeader = true
+	b.status = status
+}
+
+func (b *responseBuffer) Write(p []byte) (int, error) {
+	if !b.wroteHeader {
+		b.WriteHeader(http.StatusOK)
+	}
+	return b.body.Write(p)
+}
+
+func (b *responseBuffer) writeTo(w http.ResponseWriter) {
+	copyHeader(w.Header(), b.header)
+	w.WriteHeader(b.status)
+	_, _ = w.Write(b.body.Bytes())
+}
+
+func copyHeader(dst, src http.Header) {
+	for key, values := range src {
+		dst[key] = append([]string(nil), values...)
+	}
 }
 
 // Middleware returns the stack the whole server runs behind: a request ID, a
 // panic guard, and a bound on how long any one request may take.
+//
+// There is deliberately no RealIP middleware: it trusts X-Forwarded-For from
+// any client, and nothing here needs the client address.
 func Middleware(log *slog.Logger) []func(http.Handler) http.Handler {
 	return []func(http.Handler) http.Handler{
 		middleware.RequestID,
-		middleware.RealIP,
 		middleware.Recoverer,
 		requestLogger(log),
 	}
@@ -615,7 +732,53 @@ func (s *Server) getFunctionSchema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/schema+json")
-	_, _ = w.Write(schema)
+	_, _ = w.Write(schema) //nolint:gosec // generated JSON Schema, served as application/schema+json
+}
+
+// getFunctionExample serves GET
+// /api/contracts/{id}/functions/{fn}/example.json: one example argument list
+// for the function.
+//
+// The document is the placeholder argument object the function's JSON Schema
+// validates, so a client can take it, fill in the fields it cares about and
+// send its first request. It is derived from the same stored interface the
+// schema is, which keeps the two from drifting apart.
+func (s *Server) getFunctionExample(w http.ResponseWriter, r *http.Request) {
+	contractID := chi.URLParam(r, "id")
+	fnName := chi.URLParam(r, "fn")
+
+	network, err := s.network(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	wasmHash := strings.TrimSpace(r.URL.Query().Get("wasm_hash"))
+	stored, err := s.reg.Store().GetSpec(r.Context(), network, contractID, wasmHash)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	fn, ok := stored.Interface.Function(fnName)
+	if !ok {
+		writeError(w, http.StatusNotFound,
+			"no function "+strconv.Quote(fnName)+" in contract "+contractID)
+		return
+	}
+
+	example, err := codegen.Example(stored.Interface, fn, codegen.Source{
+		ContractID: stored.ContractID,
+		Network:    stored.Network,
+		WasmHash:   stored.WasmHash,
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(example) //nolint:gosec // generated example, served as application/json
 }
 
 // listFunctions serves GET /api/contracts/{id}/functions.
@@ -648,6 +811,47 @@ func (s *Server) listFunctions(w http.ResponseWriter, r *http.Request) {
 		Network:    stored.Network,
 		WasmHash:   stored.WasmHash,
 		Functions:  functions,
+	})
+}
+
+// listEvents serves GET /api/contracts/{id}/events: the event definitions a
+// contract declares, for the indexers that react to them.
+//
+// An indexer usually wants only the events and not the whole interface, which
+// is one large document. Each event is the definition the interface holds
+// itself — its name, topic names, parameters with their types and whether
+// each is a topic or data, and the data payload's packing — so values here
+// match the ones the interface document serves, `?wasm_hash=` selects a
+// superseded version the same way, and the shapes stay in step by
+// construction.
+func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	contractID := chi.URLParam(r, "id")
+
+	network, err := s.network(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	wasmHash := strings.TrimSpace(r.URL.Query().Get("wasm_hash"))
+	stored, err := s.reg.Store().GetSpec(r.Context(), network, contractID, wasmHash)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	events := stored.Interface.Events
+	if events == nil {
+		// A contract with no events still answers with an empty list,
+		// the way the interface document answers with [].
+		events = []model.Event{}
+	}
+
+	writeJSON(w, http.StatusOK, eventListResponse{
+		ContractID: stored.ContractID,
+		Network:    stored.Network,
+		WasmHash:   stored.WasmHash,
+		Events:     events,
 	})
 }
 
