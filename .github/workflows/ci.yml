@@ -36,6 +36,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The coverage gate tests the pull request's base commit in a
+          # worktree, so its history must be present.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
@@ -44,20 +48,31 @@ jobs:
           # Always the newest patch release: security fixes land there.
           check-latest: true
 
-      - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt'd:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: Vet
-        run: go vet ./...
+      # The version is pinned here and in the Makefile; keep the two equal so
+      # `make lint` and CI cannot disagree about what a finding is.
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          args: --timeout=5m
 
       - name: Build
         run: go build ./...
+
+      # Measure main before running the pull request's tests. Both runs use
+      # the same throwaway Postgres, and the base schema is older, so running
+      # it first avoids applying a newer migration underneath an older tree.
+      - name: Baseline coverage from the base commit
+        if: github.event_name == 'pull_request'
+        env:
+          CI: "true"
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TEST_DATABASE_URL: postgres://sorovault:sorovault@localhost:5432/sorovault?sslmode=disable
+        run: |
+          git worktree add "$RUNNER_TEMP/baseline" "$BASE_SHA"
+          cd "$RUNNER_TEMP/baseline"
+          go test -coverprofile=coverage.out -covermode=atomic ./...
+          cp coverage.out "$GITHUB_WORKSPACE/coverage-base.out"
 
       # TEST_DATABASE_URL turns on the Postgres half of the store
       # conformance suite; without it those cases would silently skip.
@@ -67,8 +82,18 @@ jobs:
           TEST_DATABASE_URL: postgres://sorovault:sorovault@localhost:5432/sorovault?sslmode=disable
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Coverage summary
-        run: go tool cover -func=coverage.out | tail -1
+      # Total and per-package coverage go to the job summary. On a pull
+      # request the same script compares with the base run and fails if the
+      # total drops by more than the stated margin.
+      - name: Coverage report
+        env:
+          MAX_COVERAGE_DROP: "0.5"
+        run: |
+          if [ -f coverage-base.out ]; then
+            .github/scripts/coverage.sh coverage.out coverage-base.out
+          else
+            .github/scripts/coverage.sh coverage.out
+          fi
 
       - name: Verify go.mod is tidy
         run: |
@@ -91,6 +116,29 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Type-check the golden client
         run: npm run typecheck
+
+  # Generating a package is one thing; proving npm accepts it and tsc builds
+  # it is another. This regenerates the checked-in zkvote package and builds
+  # it from scratch with the pinned toolchain.
+  codegen-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          check-latest: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Regenerate the zkvote package
+        run: go test ./internal/codegen -run TestGoldenPackage -update
+      - name: Fail if regeneration changed the checked-in package
+        run: git diff --exit-code internal/codegen/testdata/zkvote-pkg
+      - name: Install and build the package
+        working-directory: internal/codegen/testdata/zkvote-pkg
+        run: npm install --no-audit --no-fund && npm run build
 
   helm:
     runs-on: ubuntu-latest
