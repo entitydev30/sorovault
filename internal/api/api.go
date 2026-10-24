@@ -68,6 +68,7 @@ func (s *Server) Routes() chi.Router {
 
 	r.Get("/contracts", s.listContracts)
 	r.Post("/contracts", s.registerContract)
+	r.Post("/decode", s.decodeWasm)
 	r.Post("/contracts:batch", s.batchRegisterContracts)
 	r.Get("/wasm/{hash}", s.getWasmSpec)
 	r.Post("/wasm/{hash}", s.catalogWasm)
