@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/soroworks/sorovault/internal/model"
+	"github.com/soroworks/sorovault/internal/spec"
 )
 
 // Memory is an in-process Store.
@@ -49,6 +50,9 @@ func (m *Memory) SetClock(now func() time.Time) {
 	defer m.mu.Unlock()
 	m.now = now
 }
+
+// Ping satisfies Store. The memory store has no external service to ask.
+func (m *Memory) Ping(ctx context.Context) error { return ctx.Err() }
 
 // Close satisfies Store. There is nothing to release.
 func (m *Memory) Close() error { return nil }
@@ -138,6 +142,7 @@ func (m *Memory) Save(ctx context.Context, c Contract, iface *model.Interface) e
 	c.LastRefreshed = now
 	// A saved interface means the contract was live, so it is not missing
 	// any more.
+	c.Implements = spec.ImplementedStandards(iface)
 	c.MissingSince = nil
 	m.contracts[k] = c
 
@@ -513,6 +518,9 @@ func (m *Memory) ListContracts(ctx context.Context, f ListFilter) (*ContractPage
 	needle := strings.ToLower(f.Query)
 	for k, c := range m.contracts {
 		if f.Network != "" && c.Network != f.Network {
+			continue
+		}
+		if len(f.Implements) > 0 && !hasAllStandards(c.Implements, f.Implements) {
 			continue
 		}
 		if needle != "" {
