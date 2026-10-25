@@ -61,7 +61,7 @@ func TestSitemapXML(t *testing.T) {
 	}
 	resp, err := server.Client().Get(server.URL + "/sitemap.xml")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("Content-Type"), "application/xml")
 	var sitemap parsedSitemap
@@ -75,6 +75,6 @@ func TestSitemapXML(t *testing.T) {
 	}
 	resp2, err := server.Client().Get(server.URL + "/sitemap-2.xml")
 	require.NoError(t, err)
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
 }

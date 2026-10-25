@@ -14,7 +14,7 @@ import (
 
 const (
 	// Each query is bounded by the store limit; each sitemap by the XML limit.
-	sitemapPageSize = 200
+	sitemapPageSize     = 200
 	contractsPerSitemap = 49999
 )
 
@@ -96,7 +96,7 @@ func (s *Server) writeSitemap(w http.ResponseWriter, r *http.Request, page int, 
 		http.NotFound(w, r)
 		return
 	}
-	start := (page-1)*contractsPerSitemap
+	start := (page - 1) * contractsPerSitemap
 	set := sitemapURLSet{XMLNS: "http://www.sitemaps.org/schemas/sitemap/0.9"}
 	if page == 1 {
 		set.URLs = append(set.URLs, sitemapEntry{Loc: s.publicURL + "/"})
