@@ -280,7 +280,7 @@ func (r *Registry) Register(ctx context.Context, contractID string) (*Result, er
 		ContractID:      contractID,
 		Network:         network,
 		CurrentWasmHash: contract.WasmHash,
-		ObservedLedger: ledger,
+		ObservedLedger:  ledger,
 	}
 	if err := r.store.Save(ctx, record, iface); err != nil {
 		return nil, err

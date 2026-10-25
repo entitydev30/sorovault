@@ -155,12 +155,12 @@ func (m *Memory) Save(ctx context.Context, c Contract, iface *model.Interface) e
 
 	m.nextID++
 	m.specs[k] = append(m.specs[k], Spec{
-		ID:         m.nextID,
-		Network:    c.Network,
-		ContractID: c.ContractID,
-		WasmHash:   c.CurrentWasmHash,
-		Interface:  cloned,
-		DecodedAt:  now,
+		ID:             m.nextID,
+		Network:        c.Network,
+		ContractID:     c.ContractID,
+		WasmHash:       c.CurrentWasmHash,
+		Interface:      cloned,
+		DecodedAt:      now,
 		ObservedLedger: c.ObservedLedger,
 	})
 	return nil
@@ -685,9 +685,9 @@ func (m *Memory) ListVersions(ctx context.Context, network, contractID string) (
 	versions := make([]SpecVersion, 0, len(m.specs[k]))
 	for _, s := range m.specs[k] {
 		versions = append(versions, SpecVersion{
-			WasmHash:  s.WasmHash,
-			DecodedAt: s.DecodedAt,
-			Current:   s.WasmHash == c.CurrentWasmHash,
+			WasmHash:       s.WasmHash,
+			DecodedAt:      s.DecodedAt,
+			Current:        s.WasmHash == c.CurrentWasmHash,
 			ObservedLedger: s.ObservedLedger,
 		})
 	}
