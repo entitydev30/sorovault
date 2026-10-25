@@ -36,7 +36,7 @@ func decodeFixture(t *testing.T) []byte {
 
 // postRaw posts body to path with an explicit Content-Type, which h.do
 // cannot express: it always claims JSON.
-func postRaw(t *testing.T, h *harness, path, contentType string, body []byte) (*http.Response, []byte) {
+func postRaw(t *testing.T, h *harness, path, contentType string, body []byte) (statusResult, []byte) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
@@ -46,11 +46,10 @@ func postRaw(t *testing.T, h *harness, path, contentType string, body []byte) (*
 
 	resp, err := h.server.Client().Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return resp, raw
+	require.NoError(t, resp.Body.Close())
+	return statusResult{StatusCode: resp.StatusCode, Header: resp.Header}, raw
 }
 
 // TestDecodeRawBodyReturnsABIWithoutStoring is the endpoint's core promise:

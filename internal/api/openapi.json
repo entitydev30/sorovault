@@ -104,6 +104,30 @@
         }
       }
     },
+    "/api/decode": {
+      "post": {
+        "summary": "Decode an uploaded WASM module without storing it",
+        "description": "Decodes the contractspecv0 section of the uploaded module and returns its interface. Nothing is stored and neither the network nor the database is touched. The body is the raw module, whatever its content type, or a multipart/form-data upload whose first file part carries it. Shares the per-client rate limit with registration and refresh.",
+        "operationId": "decodeWasm",
+        "parameters": [
+          { "name": "format", "in": "query", "description": "json (the default) returns the interface; ts returns the generated TypeScript client.", "schema": { "type": "string", "enum": ["json", "ts"] } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/wasm": { "schema": { "type": "string", "format": "binary" } },
+            "multipart/form-data": { "schema": { "type": "object", "properties": { "file": { "type": "string", "format": "binary" } } } }
+          }
+        },
+        "responses": {
+          "200": { "description": "The decoded interface, or the TypeScript client when format=ts.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Interface" } }, "text/plain": { "schema": { "type": "string" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "413": { "description": "The upload exceeds the size limit, which the error states.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "422": { "description": "The body is not a WebAssembly module, or its spec section does not decode.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
     "/api/contracts/{id}": {
       "get": {
         "summary": "A contract's decoded interface",
