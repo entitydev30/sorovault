@@ -39,7 +39,7 @@ func newRateLimitedHarness(t *testing.T, opts api.RateLimitOptions) *harness {
 	return &harness{server: srv, fake: fake, store: db, api: server}
 }
 
-func postWithForwardedFor(t *testing.T, h *harness, path, body, forwardedFor string) (*http.Response, []byte) {
+func postWithForwardedFor(t *testing.T, h *harness, path, body, forwardedFor string) (statusResult, []byte) {
 	t.Helper()
 
 	req, err := http.NewRequest(http.MethodPost, h.server.URL+path, strings.NewReader(body))
@@ -53,11 +53,17 @@ func postWithForwardedFor(t *testing.T, h *harness, path, body, forwardedFor str
 
 	resp, err := h.server.Client().Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return resp, raw
+	require.NoError(t, resp.Body.Close())
+	return statusResult{StatusCode: resp.StatusCode, Header: resp.Header}, raw
+}
+
+// statusResult is the part of a response these tests assert on. The helper
+// closes the body before returning, so no caller holds an open response.
+type statusResult struct {
+	StatusCode int
+	Header     http.Header
 }
 
 // TestRateLimitTriggersAndResets proves the registration route refuses the
@@ -66,9 +72,9 @@ func postWithForwardedFor(t *testing.T, h *harness, path, body, forwardedFor str
 func TestRateLimitTriggersAndResets(t *testing.T) {
 	t.Parallel()
 
-	// 6000/minute is one token every 10ms, so the reset is quick enough for
-	// a test and still leaves room for a burst of one.
-	h := newRateLimitedHarness(t, api.RateLimitOptions{PerMinute: 6000, Burst: 1})
+	// 60/minute is one token a second: long enough that the second request
+	// cannot be refilled even on a loaded runner, short enough to wait out.
+	h := newRateLimitedHarness(t, api.RateLimitOptions{PerMinute: 60, Burst: 1})
 	h.fake.Deploy(idA, moduleWith(t, "balance"))
 	body := `{"contract_id":"` + idA + `"}`
 
@@ -85,15 +91,16 @@ func TestRateLimitTriggersAndResets(t *testing.T) {
 	resp, raw = h.do(t, http.MethodGet, "/api/contracts", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
 
-	time.Sleep(25 * time.Millisecond)
-	resp, raw = h.do(t, http.MethodPost, "/api/contracts", body)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	assert.Eventually(t, func() bool {
+		resp, _ := h.do(t, http.MethodPost, "/api/contracts", body)
+		return resp.StatusCode == http.StatusOK
+	}, 5*time.Second, 50*time.Millisecond, "the limit should reset once a token is available")
 }
 
 func TestRateLimitCoversRefresh(t *testing.T) {
 	t.Parallel()
 
-	h := newRateLimitedHarness(t, api.RateLimitOptions{PerMinute: 6000, Burst: 1})
+	h := newRateLimitedHarness(t, api.RateLimitOptions{PerMinute: 1, Burst: 1})
 	path := "/api/contracts/" + idA + "/refresh"
 
 	resp, raw := h.do(t, http.MethodPost, path, "")
@@ -113,7 +120,7 @@ func TestRateLimitOnlyTrustsForwardedForWhenConfigured(t *testing.T) {
 	t.Run("ignored by default", func(t *testing.T) {
 		t.Parallel()
 
-		h := newRateLimitedHarness(t, api.RateLimitOptions{PerMinute: 6000, Burst: 1})
+		h := newRateLimitedHarness(t, api.RateLimitOptions{PerMinute: 1, Burst: 1})
 		body := `{"contract_id":"` + idA + `"}`
 
 		resp, raw := postWithForwardedFor(t, h, "/api/contracts", body, "203.0.113.1")
@@ -127,7 +134,7 @@ func TestRateLimitOnlyTrustsForwardedForWhenConfigured(t *testing.T) {
 		t.Parallel()
 
 		h := newRateLimitedHarness(t, api.RateLimitOptions{
-			PerMinute: 6000, Burst: 1, TrustXForwardedFor: true,
+			PerMinute: 1, Burst: 1, TrustXForwardedFor: true,
 		})
 		body := `{"contract_id":"` + idA + `"}`
 

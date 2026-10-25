@@ -30,7 +30,14 @@ func corsServer(t *testing.T, origins []string) *httptest.Server {
 	return srv
 }
 
-func corsRequest(t *testing.T, srv *httptest.Server, method, path, origin, requestMethod string) *http.Response {
+// httpResult is the part of a response these tests assert on. The helpers
+// close the body before returning, so no caller holds an open response.
+type httpResult struct {
+	StatusCode int
+	Header     http.Header
+}
+
+func corsRequest(t *testing.T, srv *httptest.Server, method, path, origin, requestMethod string) httpResult {
 	t.Helper()
 
 	req, err := http.NewRequest(method, srv.URL+path, nil)
@@ -44,8 +51,9 @@ func corsRequest(t *testing.T, srv *httptest.Server, method, path, origin, reque
 
 	resp, err := srv.Client().Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	return httpResult{StatusCode: resp.StatusCode, Header: resp.Header}
 }
 
 func TestCORSIgnoredWhenUnset(t *testing.T) {

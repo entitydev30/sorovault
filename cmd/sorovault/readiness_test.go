@@ -54,19 +54,18 @@ func readinessServer(t *testing.T, db store.Store, fake *stellartest.Fake) *http
 	return srv
 }
 
-func getReadiness(t *testing.T, srv *httptest.Server) (*http.Response, readinessResponse, []byte) {
+func getReadiness(t *testing.T, srv *httptest.Server) (httpResult, readinessResponse, []byte) {
 	t.Helper()
 
 	resp, err := srv.Client().Get(srv.URL + "/readyz")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 
 	var report readinessResponse
 	require.NoError(t, json.Unmarshal(raw, &report), "response was not JSON: %s", raw)
-	return resp, report, raw
+	return httpResult{StatusCode: resp.StatusCode, Header: resp.Header}, report, raw
 }
 
 func TestReadyzHealthy(t *testing.T) {
